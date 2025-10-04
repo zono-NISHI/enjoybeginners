@@ -1,7 +1,348 @@
-<html>
-<head></head>
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>YouTube 必須視聴 & 通知ランチャー</title>
+  <meta name="theme-color" content="#111827" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <style>
+    :root{--bg:#0f172a;--card:#111827;--muted:#9ca3af;--text:#f9fafb;--accent:#22d3ee;}
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0b1220,#0f172a 40%);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji"}
+    .wrap{max-width:680px;margin:0 auto;padding:24px 16px 56px}
+    .card{background:rgba(17,24,39,.7);backdrop-filter: blur(10px);border:1px solid rgba(255,255,255,.06);border-radius:20px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+    h1{font-size:22px;margin:0 0 12px}
+    p.lead{color:var(--muted);margin-top:4px}
+    label{display:block;font-size:14px;margin:14px 0 6px;color:#e5e7eb}
+    input,button,select{font:inherit}
+    input[type="url"], input[type="datetime-local"]{
+      width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);
+      background:#0b1020;color:var(--text);outline:none
+    }
+    .row{display:grid;grid-template-columns:1fr;gap:12px}
+    @media (min-width:600px){.row{grid-template-columns:1fr 1fr}}
+    .btn{display:inline-flex;gap:8px;align-items:center;border:none;border-radius:12px;padding:12px 16px;font-weight:600;cursor:pointer}
+    .primary{background:var(--accent);color:#06202a}
+    .ghost{background:transparent;color:var(--text);border:1px solid rgba(255,255,255,.14)}
+    .danger{background:#ef4444;color:white}
+    .muted{color:var(--muted);font-size:13px}
+    .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.16);color:#93c5fd}
+    .lock{display:flex;align-items:center;gap:8px;margin-top:8px}
+    .grid{display:grid;gap:12px}
+    .yt{aspect-ratio:16/9;background:#0b1020;border:1px dashed rgba(255,255,255,.12);border-radius:12px;display:flex;align-items:center;justify-content:center;color:#94a3b8}
+    .footer{margin-top:18px;font-size:12px;color:#a1a1aa}
+    .hidden{display:none}
+  </style>
+</head>
 <body>
-    sayonara
-    <iframe width="560" height="315" src="https://www.youtube.com/embed/TLJqi0IjMwo?si=bzFaYE8eaW4LTztQ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+  <div class="wrap">
+    <div class="card">
+      <h1>📺 YouTube 指定時刻で通知＆自動遷移</h1>
+      <p class="lead">動画URLと通知したい日時をセット。時間になったら通知し、指定動画へジャンプします。</p>
+
+      <div class="grid">
+        <div>
+          <label>対象のYouTube動画URL</label>
+          <input id="videoUrl" type="url" placeholder="https://www.youtube.com/watch?v=XXXXXXXX" inputmode="url" />
+          <div class="muted">ショートURL（youtu.be）もOK</div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>通知する日時（端末の現地時刻）</label>
+            <input id="when" type="datetime-local" />
+          </div>
+          <div>
+            <label>動画開始位置（秒, 任意）</label>
+            <input id="startSec" type="number" min="0" placeholder="例）120" />
+          </div>
+        </div>
+
+        <div class="lock">
+          <input id="lockMode" type="checkbox" />
+          <label for="lockMode">閲覧必須モード（完了までアプリ内リンクをロック）</label>
+        </div>
+
+        <div class="row">
+          <button id="enableNotif" class="btn ghost" type="button">🔔 通知を許可</button>
+          <button id="start" class="btn primary" type="button">▶ 予約開始</button>
+        </div>
+
+        <div class="row">
+          <button id="stayAwake" class="btn ghost" type="button">💡 画面消灯防止</button>
+          <button id="cancel" class="btn danger" type="button">✖ 予約解除</button>
+        </div>
+
+        <div id="status" class="badge">準備中</div>
+
+        <div class="yt hidden" id="ytBox">（閲覧必須モード：動画完了で解除）</div>
+
+        <div class="footer">
+          <div>※ このページを閉じる／スリープ中はタイマーが遅延することがあります。開いたままの運用が確実です。</div>
+          <div>※ iOSは“ホーム画面に追加”すると通知の安定度が上がります（許可が必要）。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---- Utility: URL 正規化 ＆ t= クエリ付与 ---------------------------------
+    function normalizeYouTubeUrl(raw, startSec) {
+      if (!raw) return null;
+      try {
+        let url = new URL(raw);
+        // youtu.be → www.youtube.com/watch?v=
+        if (url.hostname === "youtu.be") {
+          const id = url.pathname.replace("/", "");
+          url = new URL("https://www.youtube.com/watch?v=" + id);
+        }
+        // shorts → watch
+        if (url.pathname.startsWith("/shorts/")) {
+          const id = url.pathname.split("/")[2] || "";
+          url = new URL("https://www.youtube.com/watch?v=" + id);
+        }
+        if (startSec && Number(startSec) > 0) {
+          url.searchParams.set("t", String(Number(startSec)));
+        }
+        return url.toString();
+      } catch { return null; }
+    }
+
+    // ---- 通知 ---------------------------------------------------------------
+    async function requestNotificationPermission() {
+      if (!("Notification" in window)) {
+        alert("このブラウザは通知に対応していません。");
+        return "unsupported";
+      }
+      if (Notification.permission === "granted") return "granted";
+      if (Notification.permission === "denied") return "denied";
+      const res = await Notification.requestPermission();
+      return res;
+    }
+    function showLocalNotification(title, body) {
+      try {
+        if (Notification.permission === "granted") {
+          new Notification(title, { body });
+        }
+      } catch (e) {
+        console.warn("Notification error:", e);
+      }
+    }
+
+    // ---- 画面消灯防止（Wake Lock） ------------------------------------------
+    let wakeLock = null;
+    async function toggleWakeLock() {
+      try {
+        if (!("wakeLock" in navigator)) {
+          alert("Wake Lockに未対応のブラウザです。");
+          return;
+        }
+        if (!wakeLock) {
+          wakeLock = await navigator.wakeLock.request("screen");
+          document.getElementById("stayAwake").textContent = "💤 画面消灯防止 解除";
+          wakeLock.addEventListener("release", () => {
+            document.getElementById("stayAwake").textContent = "💡 画面消灯防止";
+            wakeLock = null;
+          });
+        } else {
+          await wakeLock.release();
+          wakeLock = null;
+        }
+      } catch (e) {
+        console.warn(e);
+        alert("画面消灯防止の取得に失敗しました。操作直後にもう一度試してください。");
+      }
+    }
+
+    // ---- スケジュール管理 ----------------------------------------------------
+    const status = document.getElementById("status");
+    const enableNotifBtn = document.getElementById("enableNotif");
+    const startBtn = document.getElementById("start");
+    const cancelBtn = document.getElementById("cancel");
+    const stayAwakeBtn = document.getElementById("stayAwake");
+    const ytBox = document.getElementById("ytBox");
+
+    let tickTimer = null;
+    let targetEpoch = null;
+    let locked = false;
+    let targetUrl = null;
+    let mustWatch = false;
+
+    function persistState() {
+      const state = {
+        targetEpoch,
+        locked,
+        targetUrl,
+        mustWatch
+      };
+      localStorage.setItem("ytLockState", JSON.stringify(state));
+    }
+    function restoreState() {
+      const s = localStorage.getItem("ytLockState");
+      if (!s) return;
+      try {
+        const {targetEpoch:te, locked:l, targetUrl:tu, mustWatch:mw} = JSON.parse(s);
+        targetEpoch = te || null;
+        locked = !!l;
+        targetUrl = tu || null;
+        mustWatch = !!mw;
+      } catch {}
+    }
+
+    function updateStatus() {
+      if (targetEpoch) {
+        const remain = Math.max(0, targetEpoch - Date.now());
+        const mins = Math.floor(remain/60000);
+        const secs = Math.floor((remain%60000)/1000);
+        status.textContent = `予約中：残り ${mins}分 ${secs}秒`;
+      } else {
+        status.textContent = "準備中";
+      }
+    }
+
+    function startTick() {
+      stopTick();
+      tickTimer = setInterval(() => {
+        updateStatus();
+        if (targetEpoch && Date.now() >= targetEpoch) {
+          stopTick();
+          trigger();
+        }
+      }, 1000);
+    }
+    function stopTick() {
+      if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+    }
+
+    function trigger() {
+      showLocalNotification("時間になりました ⏰", "指定のYouTubeへ移動します。");
+      if (!targetUrl) return;
+      // 強制遷移
+      window.location.href = targetUrl;
+    }
+
+    // ---- 閲覧必須モード：YouTube IFrame APIで視聴完了検知 -------------------
+    // このページ内の“リンク類”をロックする（簡易的）
+    function applyLockUI(on) {
+      locked = on;
+      document.querySelectorAll("a").forEach(a=>{
+        if (on) {
+          a.dataset.href = a.getAttribute("href");
+          a.removeAttribute("href");
+          a.style.pointerEvents = "none"; a.style.opacity = ".4";
+          a.title = "動画の視聴完了で解除されます";
+        } else {
+          if (a.dataset.href) a.setAttribute("href", a.dataset.href);
+          a.style.pointerEvents = ""; a.style.opacity = ""; a.title = "";
+        }
+      });
+      ytBox.classList.toggle("hidden", !on);
+      persistState();
+    }
+
+    // IFrame API 動的読み込み
+    let ytPlayer = null;
+    function loadYouTubePlayer(url) {
+      if (!url) return;
+      // 抽出
+      const u = new URL(url);
+      const id = u.searchParams.get("v");
+      const start = Number(u.searchParams.get("t") || 0);
+      if (!id) return;
+      // APIスクリプト
+      if (!document.getElementById("ytapi")) {
+        const s = document.createElement("script");
+        s.id = "ytapi";
+        s.src = "https://www.youtube.com/iframe_api";
+        document.body.appendChild(s);
+      }
+      window.onYouTubeIframeAPIReady = () => {
+        ytPlayer = new YT.Player("ytBox", {
+          videoId: id,
+          playerVars: { start, playsinline: 1, rel: 0 },
+          events: {
+            onReady: (ev) => { ev.target.playVideo?.(); },
+            onStateChange: (ev) => {
+              // 再生完了（ENDED=0→終了は 0? 正しくは YT.PlayerState.ENDED=0？）
+              // 実値は YT.PlayerState.ENDED === 0
+              if (ev.data === YT.PlayerState.ENDED) {
+                mustWatch = false;
+                applyLockUI(false);
+                localStorage.setItem("ytWatched:"+id, "done");
+                alert("視聴完了！ロック解除しました。");
+              }
+            }
+          }
+        });
+      };
+    }
+
+    // ---- イベント ------------------------------------------------------------
+    enableNotifBtn.addEventListener("click", async ()=>{
+      const res = await requestNotificationPermission();
+      if (res === "granted") alert("通知が許可されました。");
+      else if (res === "denied") alert("通知が拒否されました（ブラウザ設定で変更可能）。");
+    });
+
+    startBtn.addEventListener("click", ()=>{
+      const raw = document.getElementById("videoUrl").value.trim();
+      const dt = document.getElementById("when").value;
+      const startSec = document.getElementById("startSec").value;
+      const lockMode = document.getElementById("lockMode").checked;
+
+      const fixed = normalizeYouTubeUrl(raw, startSec);
+      if (!fixed) { alert("YouTube URLを確認してください。"); return; }
+      if (!dt) { alert("日時を選択してください。"); return; }
+
+      targetUrl = fixed;
+      targetEpoch = new Date(dt).getTime();
+      if (isNaN(targetEpoch)) { alert("日時の形式が正しくありません。"); return; }
+      if (targetEpoch <= Date.now()) { alert("未来の日時を選択してください。"); return; }
+
+      if (lockMode) {
+        mustWatch = true;
+        applyLockUI(true);
+        loadYouTubePlayer(targetUrl);
+      } else {
+        mustWatch = false;
+        applyLockUI(false);
+      }
+
+      persistState();
+      startTick();
+      updateStatus();
+      alert("予約しました。ページを開いたままにすると確実です。");
+    });
+
+    cancelBtn.addEventListener("click", ()=>{
+      targetEpoch = null; targetUrl = null; stopTick(); updateStatus();
+      mustWatch = false; applyLockUI(false);
+      persistState();
+      alert("予約を解除しました。");
+    });
+
+    stayAwakeBtn.addEventListener("click", toggleWakeLock);
+
+    // ページ復元時の処理
+    restoreState();
+    if (targetEpoch) { startTick(); updateStatus(); }
+    if (locked && mustWatch && targetUrl) {
+      applyLockUI(true);
+      loadYouTubePlayer(targetUrl);
+    }
+
+    // ページ非表示の注意（軽いリマインド）
+    document.addEventListener("visibilitychange", ()=>{
+      if (document.hidden && targetEpoch) {
+        console.log("Background; timers may throttle.");
+      }
+    });
+
+    // SW 登録（PWA・キャッシュ用途）
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(console.warn);
+    }
+  </script>
 </body>
 </html>
