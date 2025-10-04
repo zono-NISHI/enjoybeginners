@@ -416,7 +416,7 @@
       const remain = Math.max(0, n - Date.now());
       const mins = Math.floor(remain / 60000);
       const secs = Math.floor((remain % 60000) / 1000);
-      statusEl.textContent = `最短の発火まで：残り ${mins}分 ${secs}秒`;
+      statusEl.textContent = `最新の予約開始まで：残り ${mins}分 ${secs}秒`;
     }
 
     let tickTimer = null;
