@@ -642,6 +642,27 @@
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("./sw.js").catch(console.warn);
     }
+
+    restoreState();
+
+// ✅ 過去の予約を自動的に破棄する処理
+if (targetEpoch && Date.now() > targetEpoch) {
+  console.log("期限切れの予約を削除しました");
+  targetEpoch = null;
+  targetUrl = null;
+  mustWatch = false;
+  locked = false;
+  localStorage.removeItem("ytLockState");
+}
+
+if (targetEpoch) { 
+  startTick(); 
+  updateStatus(); 
+}
+if (locked && mustWatch && targetUrl) {
+  applyLockUI(true);
+  loadYouTubePlayer(targetUrl);
+}
   </script>
 </body>
 </html>
